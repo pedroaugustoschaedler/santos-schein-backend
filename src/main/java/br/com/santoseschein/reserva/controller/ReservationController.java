@@ -31,8 +31,12 @@ public class ReservationController {
     @Autowired
     private CourtRepository courtRepository;
 
+    /**
+     * Cria reserva
+     */
     @PostMapping
     public ResponseEntity<?> createReservation(@RequestBody ReservationRequest request) {
+        // Busca usuário e quadra
         Optional<User> userOpt = userRepository.findById(request.getUserId());
         Optional<Court> courtOpt = courtRepository.findById(request.getCourtId());
 
@@ -40,17 +44,17 @@ public class ReservationController {
             return ResponseEntity.badRequest().body("Usuário ou Quadra não encontrados.");
         }
 
+        // Configura horários da reserva
         LocalDate date = LocalDate.parse(request.getDate());
         LocalTime startTime = LocalTime.parse(request.getStartTime());
         LocalTime endTime = startTime.plusMinutes(request.getDurationMinutes());
 
-        // Check if booking goes beyond 21:00 or end of day limit if needed (e.g. 22:00)
-        // User requested: "de 30 minutos como inicio ate as 21 horas"
-        // Let's ensure the booking end time doesn't exceed 21:30 (since last slot starts at 21:00)
+        // Valida horário de término limite
         if (endTime.isAfter(LocalTime.of(21, 30))) {
             return ResponseEntity.badRequest().body("Reservas não podem ultrapassar 21:30.");
         }
 
+        // Verifica conflitos de horários
         List<Reservation> overlapping = reservationRepository.findOverlappingReservations(
                 request.getCourtId(), date, startTime, endTime);
 
@@ -58,6 +62,7 @@ public class ReservationController {
             return ResponseEntity.badRequest().body("Este horário já possui conflito com outra reserva.");
         }
 
+        // Salva nova reserva
         Reservation reservation = new Reservation(
                 userOpt.get(),
                 courtOpt.get(),
@@ -71,12 +76,16 @@ public class ReservationController {
         return ResponseEntity.ok("Reserva realizada com sucesso!");
     }
 
+    /**
+     * Busca reservas do usuário
+     */
     @GetMapping("/user/{userId}")
     public List<ReservationResponse> getUserReservations(@PathVariable UUID userId) {
         List<Reservation> reservations = reservationRepository.findByUserId(userId);
         List<ReservationResponse> responses = new ArrayList<>();
         DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
+        // Formata as reservas para resposta
         for (Reservation r : reservations) {
             responses.add(new ReservationResponse(
                     r.getId(),
@@ -89,6 +98,9 @@ public class ReservationController {
         return responses;
     }
 
+    /**
+     * Busca os slots de horários de uma quadra para a semana
+     */
     @GetMapping("/slots")
     public List<Map<String, Object>> getSlots(
             @RequestParam UUID courtId,
@@ -102,12 +114,13 @@ public class ReservationController {
 
         List<Map<String, Object>> slots = new ArrayList<>();
 
-        // Fetch reservations for the whole week
+        // Inicializa mapa de reservas por dia da semana
         Map<String, List<Reservation>> reservationsByDayKey = new HashMap<>();
         for (String k : keys) {
             reservationsByDayKey.put(k, new ArrayList<>());
         }
 
+        // Busca reservas para cada dia da semana
         for (int i = 0; i < 7; i++) {
             LocalDate currentDay = weekStart.plusDays(i);
             String dayKey = keys[i];
@@ -115,6 +128,7 @@ public class ReservationController {
             reservationsByDayKey.get(dayKey).addAll(reservations);
         }
 
+        // Monta os slots de horários disponíveis
         for (String dayKey : keys) {
             for (String timeStr : times) {
                 LocalTime slotTime = LocalTime.parse(timeStr);
@@ -124,11 +138,13 @@ public class ReservationController {
                 
                 boolean isWeekend = dayKey.equals("sab") || dayKey.equals("dom");
                 
-                // A slot is reserved if slotTime is between r.startTime (inclusive) and r.endTime (exclusive)
+                // Verifica se o slot está reservado no horário atual
                 boolean isReserved = false;
                 for (Reservation r : reservationsByDayKey.get(dayKey)) {
-                    if ((slotTime.equals(r.getStartTime()) || slotTime.isAfter(r.getStartTime())) 
-                            && slotTime.isBefore(r.getEndTime())) {
+                    boolean isSlotWithinReservation = (slotTime.equals(r.getStartTime()) || slotTime.isAfter(r.getStartTime())) 
+                            && slotTime.isBefore(r.getEndTime());
+                            
+                    if (isSlotWithinReservation) {
                         isReserved = true;
                         break;
                     }
